@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>TurnoYa - Test Supabase REAL</title>
+<style>
+body{font-family:system-ui;background:#0a0a0a;color:#fff;padding:16px;max-width:720px;margin:0 auto}
+input,textarea{width:100%;padding:12px;border-radius:10px;border:1px solid #333;background:#111;color:#fff;margin:6px 0;box-sizing:border-box}
+button{padding:12px 16px;border:0;border-radius:10px;font-weight:700;cursor:pointer;margin:6px 6px 6px 0}
+.green{background:#22c55e}.blue{background:#3b82f6;color:#fff}.red{background:#ef4444;color:#fff}.amber{background:#f59e0b}
+pre{background:#000;border:1px solid #333;padding:12px;border-radius:10px;white-space:pre-wrap;word-break:break-word;min-height:120px;font-size:13px}
+.card{background:#151515;border:1px solid #222;padding:14px;border-radius:14px;margin:12px 0}
+.small{color:#aaa;font-size:13px}
+</style></head><body>
+<h2>TurnoYa - Test Supabase REAL</h2>
+<p class="small">Esta pagina NO simula nada. Hace fetch real a TU proyecto. Abrila desde <b>https://turnerapro.github.io/test.html</b></p>
+<div class="card">
+<label>Project URL (https://xxxx.supabase.co)</label>
+<input id="url" placeholder="https://xxxx.supabase.co">
+<label>Publishable key (sb_publishable_...)</label>
+<textarea id="key" rows="3" placeholder="sb_publishable_..."></textarea>
+<button class="green" onclick="save()">Guardar config en este navegador</button>
+<span id="badge"></span>
+<p class="small">NO es tu email/contraseña. NO es la Secret. Es la Publishable de Settings &gt; API</p>
+</div>
+<div class="card">
+<button class="blue" onclick="testConn()">1. Probar Conexion</button>
+<button class="amber" onclick="createTest()">2. Crear Negocio TEST</button>
+<button class="blue" onclick="listAll()">3. Ver Negocios</button>
+<button class="red" onclick="delTest()">4. Borrar TEST</button>
+</div>
+<pre id="log">Esperando...</pre>
+<div class="card"><b>SQL que tiene que estar corrido en Supabase &gt; SQL Editor &gt; Run without RLS:</b>
+<pre style="color:#a7f3d0">create table businesses (id bigserial primary key, slug text unique not null, name text, owner_whatsapp text, phone text, instagram text, address text, description text, color text default '#22c55e', logo_url text, banner_url text, fotos jsonb default '[]'::jsonb, staff jsonb default '[]'::jsonb, services jsonb default '[]'::jsonb, created_at timestamp default now());
+create table bookings (id bigserial primary key, business_slug text, business_name text, service text, price int, date text, time text, staff_name text, client_name text, client_whatsapp text, owner_whatsapp text, status text default 'pendiente', created_at timestamp default now());
+alter table businesses disable row level security;
+alter table bookings disable row level security;</pre>
+</div>
+<script>
+function log(t){ document.getElementById('log').textContent = new Date().toLocaleTimeString() + " - " + t; }
+function getCfg(){ return {u: document.getElementById('url').value.trim(), k: document.getElementById('key').value.trim()}; }
+function save(){ const c=getCfg(); localStorage.setItem('supabase_url',c.u); localStorage.setItem('supabase_anon',c.k); document.getElementById('badge').textContent=' Guardado - refresca y sigue'; log('Config guardada: '+c.u); }
+window.onload=()=>{ const u=localStorage.getItem('supabase_url')||''; const k=localStorage.getItem('supabase_anon')||''; if(u) document.getElementById('url').value=u; if(k) document.getElementById('key').value=k; if(u&&k) document.getElementById('badge').textContent=' Config cargada'; };
+async function testConn(){ const c=getCfg(); if(!c.u||!c.k){ log('FALTA URL o KEY'); return; } if(c.u.includes('supabase.com/dashboard')){ log('ERROR: Esa URL es la web dashboard. Tiene que ser https://xxxx.supabase.co - Settings > API > Project URL'); return; } log('Conectando REAL a '+c.u+'/rest/v1/businesses ...'); try{ const r=await fetch(c.u.replace(/\/$/,'')+'/rest/v1/businesses?select=*&limit=5',{headers:{apikey:c.k, Authorization:'Bearer '+c.k}}); const txt=await r.text(); log('HTTP '+r.status+'\n'+txt.slice(0,3000)+'\n\nSi 200 y [] = conecto pero sin negocios. Si "relation does not exist" = falta tabla. Si RLS/permission denied = falta disable RLS.'); }catch(e){ log('ERROR RED: '+e.message+' - Proyecto PAUSED? Entra a Supabase Dashboard y dale Resume.'); } }
+async function createTest(){ const c=getCfg(); log('Insertando TEST...'); try{ const r=await fetch(c.u.replace(/\/$/,'')+'/rest/v1/businesses',{method:'POST',headers:{apikey:c.k, Authorization:'Bearer '+c.k,'Content-Type':'application/json',Prefer:'return=representation'},body:JSON.stringify({slug:'test-borrar-123',name:'TEST BORRAR',owner_whatsapp:'5491123456789',color:'#22c55e',services:[{name:'Corte',price:15000,duration:40}]})}); const txt=await r.text(); log('HTTP '+r.status+'\n'+txt.slice(0,3000)); }catch(e){ log('ERROR: '+e.message); } }
+async function listAll(){ const c=getCfg(); try{ const r=await fetch(c.u.replace(/\/$/,'')+'/rest/v1/businesses?select=*&order=created_at.desc&limit=20',{headers:{apikey:c.k, Authorization:'Bearer '+c.k}}); const txt=await r.text(); log('HTTP '+r.status+'\n'+txt.slice(0,4000)); }catch(e){ log('ERROR: '+e.message); } }
+async function delTest(){ const c=getCfg(); try{ const r=await fetch(c.u.replace(/\/$/,'')+'/rest/v1/businesses?slug=eq.test-borrar-123',{method:'DELETE',headers:{apikey:c.k, Authorization:'Bearer '+c.k}}); const txt=await r.text(); log('HTTP '+r.status+' DELETE '+txt); }catch(e){ log('ERROR: '+e.message); } }
+</script></body></html>
