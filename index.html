@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="es"><head><style>
+@font-face {
+  font-family: "Optimistic";
+  font-style: normal;
+  font-weight: 400 600;
+  font-display: swap;
+  src: url("/fonts/OptimisticAI_VF_Optimized.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Optimistic Mono";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/OptimisticMono_W_TextRegular.woff2") format("woff2");
+}
+:where(html) {
+  font-family: "Optimistic", system-ui, sans-serif;
+}
+:where(code, pre, kbd, samp) {
+  font-family: "Optimistic Mono", ui-monospace, monospace;
+}
+</style><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>TurnoYa - Panel</title>
+<style>
+*{box-sizing:border-box} body{font-family:system-ui;background:#0a0a0a;color:#fff;margin:0;padding:14px}
+input,textarea,select{width:100%;padding:11px;border-radius:10px;border:1px solid #333;background:#111;color:#fff;margin:5px 0}
+button{padding:11px 14px;border:0;border-radius:10px;font-weight:700;cursor:pointer;margin:4px 4px 4px 0}
+.g{background:#22c55e}.b{background:#3b82f6;color:#fff}.w{background:#fff;color:#000}.r{background:#ef4444;color:#fff}.y{background:#f59e0b}
+.card{background:#151515;border:1px solid #222;padding:14px;border-radius:14px;margin:10px 0}
+.badge{display:inline-block;padding:6px 10px;border-radius:999px;font-size:12px;font-weight:700}
+.badge-ok{background:#14532d}.badge-no{background:#7f1d1d}
+pre{background:#000;border:1px solid #333;padding:10px;border-radius:10px;white-space:pre-wrap;word-break:break-word;font-size:12px;max-height:180px;overflow:auto}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px} @media(max-width:600px){.grid{grid-template-columns:1fr}}
+.slot{display:inline-block;padding:9px 12px;border-radius:10px;border:1px solid #333;margin:4px;cursor:pointer;background:#111;color:#fff}
+.slot.sel{background:#22c55e;color:#000}.slot.off{background:#333;color:#777;text-decoration:line-through;cursor:not-allowed}
+.chip{display:inline-block;padding:6px 10px;border-radius:999px;background:#222;margin:3px;font-size:13px;cursor:pointer}
+.chip.sel{background:#22c55e;color:#000}
+.light{background:#f6f6f6;color:#111} .light .card{background:#fff;border-color:#e5e5e5;color:#111} .light input,.light textarea,.light select{background:#fff;color:#111;border-color:#ddd} .light .slot{background:#fff;color:#111}
+img{max-width:100%;border-radius:12px}
+</style></head><body>
+<div id="app"></div>
+<script>
+const $=s=>document.querySelector(s);
+let CFG={url:localStorage.getItem('supabase_url')||'', key:localStorage.getItem('supabase_anon')||''};
+let BUSINESSES=[]; let CUR=null; let SEL_SERVICE=null; let SEL_STAFF=null; let SEL_DATE=new Date().toISOString().slice(0,10); let SEL_TIME=null;
+
+function log(m){ const e=$('#log'); if(e) e.textContent=new Date().toLocaleTimeString()+' - '+m+'\n'+e.textContent; }
+function slugify(t){ return (t||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,''); }
+function saveCfg(){ CFG.url=$('#cfgUrl').value.trim(); CFG.key=$('#cfgKey').value.trim(); localStorage.setItem('supabase_url',CFG.url); localStorage.setItem('supabase_anon',CFG.key); log('Config guardada'); render(); }
+function api(path, opts={}){ const base=CFG.url.replace(/\/$/,''); return fetch(base+'/rest/v1/'+path,{...opts, headers:{apikey:CFG.key, Authorization:'Bearer '+CFG.key, 'Content-Type':'application/json', Prefer:'return=representation', ...(opts.headers||{})}}); }
+
+// ADAPTIVE SAVE: si Supabase dice que falta una columna, la sacamos y la guardamos adentro de services.meta y reintentamos solo
+async function adaptiveSaveBusiness(payload){
+  let p={...payload};
+  // Guardamos todo extra en services.meta para que no se pierda aunque la columna no exista
+  if(!p.services || Array.isArray(p.services)){ p.services={meta:{}, list: Array.isArray(p.services)?p.services:[]}; }
+  // Si payload tiene campos extra, los metemos en meta tambien
+  for(let k of ['color','logo_url','banner_url','fotos','staff','description','instagram','address','phone','horario_inicio','horario_fin']){
+    if(p[k]!==undefined){ p.services.meta[k]=p[k]; }
+  }
+  for(let i=0;i<6;i++){
+    const r=await api('businesses',{method:'POST', body:JSON.stringify(p)});
+    const txt=await r.text();
+    let j; try{j=JSON.parse(txt)}catch(e){j={message:txt}}
+    if(r.ok){ log('Guardado en nube OK'); return {ok:true, data:j}; }
+    const msg=j.message||txt;
+    const m=msg.match(/Could not find the '([^']+)' column/);
+    if(m){ const col=m[1]; log('Supabase dice que falta columna '+col+' - la saco y reintento guardando adentro de services.meta'); if(p[col]!==undefined){ p.services.meta[col]=p[col]; delete p[col]; } else { // si no estaba en payload, es porque ya la sacamos, intentar sin services.meta
+      delete p.services.meta[col];
+    } continue; }
+    if(msg.includes('duplicate key')||msg.includes('already exists')){ // update
+      const r2=await api('businesses?slug=eq.'+encodeURIComponent(p.slug),{method:'PATCH', body:JSON.stringify(p)});
+      const t2=await r2.text(); if(r2.ok){ log('Actualizado en nube OK'); return {ok:true, data:JSON.parse(t2)}; } else { log('Error UPDATE: '+t2); return {ok:false, error:t2}; }
+    }
+    log('Error Supabase: '+txt); return {ok:false, error:txt};
+  }
+  return {ok:false, error:'Reintentos agotados'};
+}
+async function adaptiveUpdateBusiness(slug, patch){
+  let p={...patch};
+  // Para update, primero traemos el negocio para mantener meta
+  const cur=BUSINESSES.find(b=>b.slug===slug);
+  let baseServices=cur?.services;
+  let meta={}; let list=[];
+  if(baseServices && typeof baseServices==='object' && baseServices.meta){ meta=baseServices.meta; list=baseServices.list||[]; }
+  else if(Array.isArray(baseServices)){ list=baseServices; }
+  for(let k of ['color','logo_url','banner_url','fotos','staff','description','instagram','address','phone','horario_inicio','horario_fin']){
+    if(p[k]!==undefined){ meta[k]=p[k]; }
+  }
+  if(p.services) list=p.services;
+  p.services={meta, list};
+  for(let i=0;i<6;i++){
+    const r=await api('businesses?slug=eq.'+encodeURIComponent(slug),{method:'PATCH', body:JSON.stringify(p)});
+    const txt=await r.text();
+    if(r.ok){ log('Actualizado OK'); return {ok:true}; }
+    let j; try{j=JSON.parse(txt)}catch(e){j={message:txt}}
+    const m=(j.message||'').match(/Could not find the '([^']+)' column/);
+    if(m){ const col=m[1]; log('Falta columna '+col+' en UPDATE - la saco y reintento'); if(p[col]!==undefined){ p.services.meta[col]=p[col]; delete p[col]; } continue; }
+    log('Error UPDATE: '+txt); return {ok:false, error:txt};
+  }
+}
+function normalizeBusiness(raw){
+  // raw puede tener services como array o como {meta, list}
+  let meta={}; let list=[];
+  if(raw.services && typeof raw.services==='object' && raw.services.meta){ meta=raw.services.meta; list=raw.services.list||[]; }
+  else if(Array.isArray(raw.services)){ list=raw.services; }
+  // Si el campo existe en la fila, tiene prioridad sobre meta
+  const get=(k)=> raw[k]!==undefined && raw[k]!==null && raw[k]!=='' ? raw[k] : meta[k];
+  return {
+    ...raw,
+    color:get('color')||'#22c55e',
+    logo_url:get('logo_url')||'',
+    banner_url:get('banner_url')||'',
+    fotos:get('fotos')||[],
+    staff:get('staff')||[],
+    description:get('description')||'',
+    instagram:get('instagram')||'',
+    address:get('address')||'',
+    phone:get('phone')||'',
+    horario_inicio:get('horario_inicio')||'09:00',
+    horario_fin:get('horario_fin')||'20:00',
+    services:list,
+    _meta:meta
+  };
+}
+async function loadBusinesses(){
+  if(!CFG.url||!CFG.key) return [];
+  try{ const r=await api('businesses?select=*&order=created_at.desc&limit=100'); const txt=await r.text(); if(!r.ok){ log('Error cargando negocios: '+txt); return []; } const arr=JSON.parse(txt); BUSINESSES=arr.map(normalizeBusiness); return BUSINESSES; }catch(e){ log('Error red: '+e.message); return []; }
+}
+function getSlugFromUrl(){
+  const u=new URLSearchParams(location.search);
+  if(u.get('b')) return {type:'client', slug:u.get('b')};
+  if(u.get('admin')) return {type:'admin', slug:u.get('admin')};
+  const p=location.pathname.replace(/^\/+/,'').split('/');
+  if(p[0]==='b'&&p[1]) return {type:'client', slug:p[1]};
+  if(p[0]==='admin'&&p[1]) return {type:'admin', slug:p[1]};
+  return {type:'owner', slug:null};
+}
+async function render(){
+  const route=getSlugFromUrl();
+  if(route.type==='client'){ await renderClient(route.slug); return; }
+  if(route.type==='admin'){ await renderAdmin(route.slug); return; }
+  renderOwner();
+}
+function renderOwner(){
+  const hasCfg=!!(CFG.url&&CFG.key);
+  $('#app').innerHTML=`
+  <h1>TurnoYa - Panel SaaS</h1>
+  <div class="card"><b>Supabase (una sola vez)</b><br><span class="small">NO es tu email/contraseña. Es Project URL + Publishable key (sb_publishable_...). Queda guardada en este navegador, no tenes que ponerla cada vez que refrescas.</span>
+  <input id="cfgUrl" placeholder="https://xxxx.supabase.co" value="${CFG.url}">
+  <textarea id="cfgKey" rows="2" placeholder="sb_publishable_...">${CFG.key}</textarea>
+  <button class="g" onclick="saveCfg()">Guardar config</button>
+  <span class="badge ${hasCfg?'badge-ok':'badge-no'}">${hasCfg?'NUBE ACTIVA':'SIN NUBE - configura arriba'}</span>
+  <pre id="log">Listo. Si config esta guardada, al refrescar sigue.</pre></div>
+  <div class="card"><h3>Crear negocio</h3>
+  <input id="nName" placeholder="Nombre negocio ej: Barberia Brian">
+  <input id="nSlug" placeholder="slug ej: barberia-brian (se genera solo)">
+  <input id="nWa" placeholder="WhatsApp dueño ej: 5491123456789">
+  <input id="nColor" type="color" value="#22c55e">
+  <button class="g" onclick="createBusiness()">Crear negocio en nube</button></div>
+  <div id="list"></div>`;
+  $('#nName').oninput=()=>{ $('#nSlug').value=slugify($('#nName').value); };
+  loadBusinesses().then(()=>{
+    $('#list').innerHTML='<h3>Negocios ('+BUSINESSES.length+')</h3>'+BUSINESSES.map(b=>`
+    <div class="card"><b>${b.name}</b> - ${b.slug} - ${b.color}
+    <br><button class="b" onclick="copyLink('b','${b.slug}')">Copiar link cliente</button>
+    <button class="y" onclick="copyLink('admin','${b.slug}')">Copiar link negocio</button>
+    <button class="w" onclick="openLink('b','${b.slug}')">Abrir cliente</button>
+    <button class="w" onclick="openLink('admin','${b.slug}')">Abrir admin</button>
+    <br><span class="small">Cliente: ${location.origin}${location.pathname}?b=${b.slug} | Negocio: ${location.origin}${location.pathname}?admin=${b.slug}</span></div>`).join('');
+  });
+}
+async function createBusiness(){
+  const name=$('#nName').value.trim(); const slug=($('#nSlug').value.trim()||slugify(name)); const wa=$('#nWa').value.trim(); const color=$('#nColor').value;
+  if(!name||!slug){ alert('Pone nombre'); return; }
+  if(!CFG.url||!CFG.key){ alert('Primero guarda la config de Supabase arriba'); return; }
+  const payload={slug, name, owner_whatsapp:wa, color, services:{meta:{color}, list:[{name:'Corte', price:15000, duration:40, description:'Corte clásico'}]}};
+  // Intentamos con payload completo, adaptiveSaveBusiness va a sacar columnas que no existan
+  const res=await adaptiveSaveBusiness(payload);
+  if(res.ok){ alert('Guardado en nube! Ya lo podes abrir en el celu'); renderOwner(); } else { alert('Error: '+res.error); }
+}
+function copyLink(type,slug){ const url=location.origin+location.pathname+'?'+type+'='+slug; navigator.clipboard.writeText(url); alert('Copiado: '+url); }
+function openLink(type,slug){ window.open(location.pathname+'?'+type+'='+slug,'_blank'); }
+
+async function renderAdmin(slug){
+  await loadBusinesses();
+  const b=BUSINESSES.find(x=>x.slug===slug);
+  if(!b){ $('#app').innerHTML='<h2>No existe negocio '+slug+'</h2><p>Crealo desde el panel principal.</p><button onclick="location.href=location.pathname">Volver</button>'; return; }
+  CUR=b; SEL_SERVICE=null;
+  $('#app').innerHTML=`
+  <div style="background:${b.color};padding:14px;border-radius:14px"><h2 style="margin:0">Admin: ${b.name}</h2><span>Link cliente: ${location.origin}${location.pathname}?b=${b.slug}</span><br>
+  <button class="w" onclick="copyLink('b','${b.slug}')">Copiar link cliente para mandar por WhatsApp</button>
+  <button class="w" onclick="openLink('b','${b.slug}')">Ver como lo ve el cliente</button></div>
+  <div class="card"><b>Marca - lo que ve el cliente</b>
+  <label>Color</label><input id="eColor" type="color" value="${b.color}">
+  <label>Logo URL (pega link de foto)</label><input id="eLogo" value="${b.logo_url}">
+  <label>Banner URL</label><input id="eBanner" value="${b.banner_url}">
+  <label>Descripcion</label><textarea id="eDesc">${b.description}</textarea>
+  <label>Instagram</label><input id="eIg" value="${b.instagram}">
+  <label>Direccion</label><input id="eAddr" value="${b.address}">
+  <label>WhatsApp dueño</label><input id="eWa" value="${b.owner_whatsapp}">
+  <label>Horario inicio</label><input id="eHi" type="time" value="${b.horario_inicio}">
+  <label>Horario fin</label><input id="eHf" type="time" value="${b.horario_fin}">
+  <button class="g" onclick="saveMarca()">Guardar marca</button><pre id="log"></pre></div>
+  <div class="card"><h3>Servicios - con duracion real</h3><div id="svcList"></div>
+  <input id="sName" placeholder="Nombre servicio ej: Corte"><input id="sPrice" type="number" placeholder="Precio ej: 15000">
+  <label>Duracion (minutos)</label><select id="sDur"><option value="15">15 min</option><option value="20">20 min</option><option value="30">30 min</option><option value="40" selected>40 min</option><option value="45">45 min</option><option value="60">60 min</option><option value="90">90 min</option></select>
+  <button class="g" onclick="addService()">Agregar servicio</button></div>
+  <div class="card"><h3>Equipo</h3><div id="staffList"></div>
+  <input id="stName" placeholder="Nombre ej: Brian"><input id="stPhoto" placeholder="Foto URL"><input id="stSpec" placeholder="Especialidad ej: Corte navaja">
+  <button class="g" onclick="addStaff()">Agregar persona</button></div>
+  <div class="card"><h3>Agenda</h3><input id="agDate" type="date" value="${SEL_DATE}"><button class="b" onclick="loadAgenda()">Ver agenda</button><div id="agList"></div></div>
+  `;
+  renderSvcList(); renderStaffList(); loadAgenda();
+}
+function renderSvcList(){ $('#svcList').innerHTML=CUR.services.map((s,i)=>`<div class="card">${s.name} - $${s.price} - ${s.duration||40} min <button class="r" onclick="delService(${i})">Borrar</button></div>`).join('')||'Sin servicios'; }
+function renderStaffList(){ $('#staffList').innerHTML=CUR.staff.map((s,i)=>`<div class="card">${s.name} - ${s.specialty||''} ${s.photo_url?'<br><img src="'+s.photo_url+'" style="width:80px;height:80px;object-fit:cover">':''} <button class="r" onclick="delStaff(${i})">Borrar</button></div>`).join('')||'Sin equipo'; }
+async function saveMarca(){ const patch={color:$('#eColor').value, logo_url:$('#eLogo').value, banner_url:$('#eBanner').value, description:$('#eDesc').value, instagram:$('#eIg').value, address:$('#eAddr').value, owner_whatsapp:$('#eWa').value, horario_inicio:$('#eHi').value, horario_fin:$('#eHf').value}; const r=await adaptiveUpdateBusiness(CUR.slug, patch); if(r.ok){ alert('Marca guardada en nube'); renderAdmin(CUR.slug); } else alert(r.error); }
+async function addService(){ const s={name:$('#sName').value, price:parseInt($('#sPrice').value||0), duration:parseInt($('#sDur').value), description:''}; if(!s.name) return; CUR.services.push(s); const r=await adaptiveUpdateBusiness(CUR.slug,{services:CUR.services}); if(r.ok) renderAdmin(CUR.slug); }
+async function delService(i){ CUR.services.splice(i,1); await adaptiveUpdateBusiness(CUR.slug,{services:CUR.services}); renderAdmin(CUR.slug); }
+async function addStaff(){ const s={name:$('#stName').value, photo_url:$('#stPhoto').value, specialty:$('#stSpec').value}; if(!s.name) return; CUR.staff.push(s); await adaptiveUpdateBusiness(CUR.slug,{staff:CUR.staff}); renderAdmin(CUR.slug); }
+async function delStaff(i){ CUR.staff.splice(i,1); await adaptiveUpdateBusiness(CUR.slug,{staff:CUR.staff}); renderAdmin(CUR.slug); }
+async function loadAgenda(){ const d=$('#agDate').value||SEL_DATE; try{ const r=await api('bookings?select=*&business_slug=eq.'+encodeURIComponent(CUR.slug)+'&date=eq.'+d+'&order=time.asc'); const txt=await r.text(); const arr=JSON.parse(txt); $('#agList').innerHTML=arr.length?arr.map(x=>`<div class="card">${x.time} - ${x.service} - ${x.client_name} - $${x.price} - ${x.status} <button class="g" onclick="waClient('${x.client_whatsapp}','${x.client_name}')">WhatsApp</button> <button class="r" onclick="delBooking(${x.id})">Borrar</button></div>`).join(''):'Sin turnos ese dia'; }catch(e){ $('#agList').textContent='Error: '+e.message; } }
+async function delBooking(id){ await api('bookings?id=eq.'+id,{method:'DELETE'}); loadAgenda(); }
+function waClient(wa,name){ window.open('https://wa.me/'+wa+'?text='+encodeURIComponent('Hola '+name+', te confirmamos tu turno en '+CUR.name),'_blank'); }
+
+async function renderClient(slug){
+  await loadBusinesses();
+  const b=BUSINESSES.find(x=>x.slug===slug);
+  if(!b){ document.body.className='light'; $('#app').innerHTML='<h2>Negocio no encontrado</h2><p>Pedile al negocio que te pase el link de nuevo.</p>'; return; }
+  CUR=b; document.body.className='light';
+  // Slots dinamicos segun duracion del servicio elegido
+  let slots=[];
+  if(SEL_SERVICE){
+    const dur=SEL_SERVICE.duration||40;
+    const [sh,sm]=b.horario_inicio.split(':').map(Number); const [eh,em]=b.horario_fin.split(':').map(Number);
+    let curMin=sh*60+sm; const endMin=eh*60+em;
+    while(curMin+dur<=endMin){ const hh=String(Math.floor(curMin/60)).padStart(2,'0'); const mm=String(curMin%60).padStart(2,'0'); slots.push(hh+':'+mm); curMin+=dur; }
+  }
+  // Traer ocupados
+  let occupied=[];
+  if(CFG.url && SEL_DATE){ try{ const r=await api('bookings?select=*&business_slug=eq.'+encodeURIComponent(b.slug)+'&date=eq.'+SEL_DATE); const txt=await r.text(); if(r.ok) occupied=JSON.parse(txt); }catch(e){} }
+  function isOccupied(slot){
+    if(!SEL_SERVICE) return false;
+    const dur=SEL_SERVICE.duration||40;
+    const [sh,sm]=slot.split(':').map(Number); const sMin=sh*60+sm; const eMin=sMin+dur;
+    return occupied.some(o=>{
+      if(SEL_STAFF && o.staff_name && o.staff_name!==SEL_STAFF) return false;
+      const [oh,om]=o.time.split(':').map(Number); const oMin=oh*60+om; const oDur=40; // si no tenemos duracion guardada, asumimos 40, pero usamos servicio actual
+      const oEnd=oMin+oDur;
+      return sMin < oEnd && eMin > oMin;
+    });
+  }
+  $('#app').innerHTML=`
+  <div style="background:${b.color};padding:0;border-radius:16px;overflow:hidden">
+    ${b.banner_url?`<img src="${b.banner_url}" style="width:100%;height:180px;object-fit:cover">`:''}
+    <div style="padding:16px;background:#fff">
+      <div style="display:flex;gap:12px;align-items:center">${b.logo_url?`<img src="${b.logo_url}" style="width:72px;height:72px;border-radius:50%;object-fit:cover;border:3px solid ${b.color}">`:''}<div><h2 style="margin:0">${b.name}</h2><p style="margin:4px 0">${b.description||''}</p><p style="margin:0">${b.address||''} ${b.instagram?' - @'+b.instagram.replace('@',''):''}</p></div></div>
+    </div>
+  </div>
+  ${b.fotos.length?`<div style="display:flex;gap:8px;overflow:auto;margin:12px 0">${b.fotos.map(f=>`<img src="${f}" style="width:120px;height:120px;object-fit:cover">`).join('')}</div>`:''}
+  <div class="card"><h3>1. Elegi quien te atiende</h3>${b.staff.length?b.staff.map(s=>`<span class="chip ${SEL_STAFF===s.name?'sel':''}" onclick="pickStaff('${s.name}')">${s.name} ${s.specialty?'- '+s.specialty:''}</span>`).join(''):'<span class="small">Sin equipo - atiende el dueño</span>'}</div>
+  <div class="card"><h3>2. Elegi servicio</h3>${b.services.map((s,i)=>`<div class="card" style="cursor:pointer;border:${SEL_SERVICE===s?'2px solid '+b.color:'1px solid #eee'}" onclick="pickService(${i})"><b>${s.name}</b> - $${s.price} - ${s.duration||40
